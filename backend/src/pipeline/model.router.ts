@@ -10,33 +10,34 @@ export const modelMap = {
 };
 
 // Mock generation functions produce structured JSON objects based on prompt.
-export function generateIntent(prompt: string) {
+import { Intent, DataSchema, AppSpec } from '../types';
+
+export function generateIntent(prompt: string): Intent {
   // naive extraction: first line as appName, check for entities
   const lines = prompt.split('\n').map((l) => l.trim()).filter(Boolean);
   const appName = lines[0] ? lines[0].split(' ').slice(0,3).join(' ') : 'MyApp';
   const features = ['auth', 'crud', 'list'];
-  const entities = (prompt.match(/\bUser\b|\bProduct\b|\bOrder\b/g) || []).map(s => ({ name: s })) || [];
-  const integrations_requested = (prompt.match(/Stripe|Firebase|Auth0|Slack|SendGrid/gi) || []);
+  const entities = (prompt.match(/\bUser\b|\bProduct\b|\bOrder\b/g) || []);
+  const integrations_requested = (prompt.match(/Stripe|Firebase|Auth0|Slack|SendGrid/gi) || []) as string[];
   const assumptions = ['single-tenant', 'standard auth'];
-
   return {
     appName,
     appType: 'web',
     features,
-    entities: entities.length ? entities : [{ name: 'User' }, { name: 'Product' }],
+    entities: entities.length ? entities : ['User','Product'],
     integrations_requested,
     assumptions,
-  };
+  } as Intent;
 }
 
-export function generateSchema(intent: any) {
-  const entities = (intent.entities || []).map((e: any) => {
-    const name = e.name || 'Entity';
+export function generateSchema(intent: Intent): DataSchema {
+  const entities = (intent.entities || []).map((e) => {
+    const name = typeof e === 'string' ? e : String(e);
     const tableName = `${name.toLowerCase()}s`;
     return {
       name,
       tableName,
-      tenantId: true,
+      tenantId: true as true,
       fields: [
         { name: 'id', type: 'string' },
         { name: 'tenantId', type: 'string' },
@@ -44,25 +45,17 @@ export function generateSchema(intent: any) {
       relations: [],
     };
   });
-  return { entities };
+  return { entities } as DataSchema;
 }
 
-export function generateAppSpec(intent: any, schema: any) {
+export function generateAppSpec(intent: Intent, schema: DataSchema): AppSpec {
   const pages = [
     { path: '/', name: 'Home' },
     { path: '/dashboard', name: 'Dashboard' },
   ];
-  const apiEndpoints = (schema.entities || []).map((e: any) => ({
-    method: 'GET',
-    path: `/api/${e.tableName}`,
-    entity: e.name,
-  }));
+  const apiEndpoints = (schema.entities || []).map((e) => ({ method: 'GET', path: `/api/${e.tableName}`, entity: e.name }));
   const authRules = [{ role: 'admin', allow: ['read','write','delete'] }];
-  const integrationHooks = (intent.integrations_requested || []).map((i: string) => ({
-    name: i,
-    hook: `/hooks/${i.toLowerCase()}`,
-  }));
+  const integrationHooks = (intent.integrations_requested || []).map((i) => ({ name: i, hook: `/hooks/${i.toLowerCase()}` }));
   const workflowStubs = [{ name: 'createItem', steps: [] }];
-
-  return { pages, apiEndpoints, authRules, integrationHooks, workflowStubs };
+  return { pages, apiEndpoints, authRules, integrationHooks, workflowStubs } as AppSpec;
 }

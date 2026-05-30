@@ -1,24 +1,64 @@
-export function validateIntent(obj: any) {
-  if (!obj) return { ok: false, error: 'Intent is null' };
-  if (!obj.appName) return { ok: false, error: 'appName missing' };
-  if (!Array.isArray(obj.features)) return { ok: false, error: 'features must be array' };
-  if (!Array.isArray(obj.entities)) return { ok: false, error: 'entities must be array' };
-  return { ok: true };
-}
+import { IntentSchema } from './intent.schema';
+import { DataSchema } from './schema.schema';
+import { AppSpecSchema } from './appspec.schema';
 
-export function validateSchema(obj: any) {
-  if (!obj) return { ok: false, error: 'Schema is null' };
-  if (!Array.isArray(obj.entities)) return { ok: false, error: 'entities must be array' };
-  for (const e of obj.entities) {
-    if (!e.name) return { ok: false, error: 'entity missing name' };
-    if (!Array.isArray(e.fields)) return { ok: false, error: 'entity.fields must be array' };
+type ValidateResult = { stage: string; errors: string[]; recoverable: boolean };
+
+function zodErrors(e: unknown): string[] {
+  if (typeof e === 'object' && e !== null) {
+    const ev = e as Record<string, unknown>;
+    if (Array.isArray(ev.errors)) {
+      return (ev.errors as unknown[]).map((it) => {
+        if (typeof it === 'object' && it !== null) {
+          const rec = it as Record<string, unknown>;
+          const path = Array.isArray(rec.path) ? (rec.path as unknown[]).map((p) => String(p)).join('.') : '';
+          const message = typeof rec.message === 'string' ? rec.message : String(it);
+          return `${path} ${message}`.trim();
+        }
+        return String(it);
+      });
+    }
   }
-  return { ok: true };
+  return [String(e)];
 }
 
-export function validateAppSpec(obj: any) {
-  if (!obj) return { ok: false, error: 'AppSpec is null' };
-  if (!Array.isArray(obj.pages)) return { ok: false, error: 'pages must be array' };
-  if (!Array.isArray(obj.apiEndpoints)) return { ok: false, error: 'apiEndpoints must be array' };
-  return { ok: true };
+export function validateIntent(obj: unknown): ValidateResult {
+  try {
+    IntentSchema.parse(obj);
+    return { stage: 'intent', errors: [], recoverable: false };
+  } catch (e) {
+    return { stage: 'intent', errors: zodErrors(e), recoverable: true };
+  }
+}
+
+export function validateSchema(obj: unknown): ValidateResult {
+  try {
+    const parsed = DataSchema.parse(obj);
+    // ensure tenantId true on all entities and relations valid structure
+    const names = parsed.entities.map((x) => x.name);
+    for (const e of parsed.entities) {
+      if (e.tenantId !== true) return { stage: 'schema', errors: ['tenantId required on all entities'], recoverable: true };
+      if (e.relations) {
+        for (const r of e.relations) {
+          if (!names.includes(r)) return { stage: 'schema', errors: [`relation ${r} references unknown entity`], recoverable: false };
+        }
+      }
+    }
+    return { stage: 'schema', errors: [], recoverable: false };
+  } catch (e) {
+    return { stage: 'schema', errors: zodErrors(e), recoverable: true };
+  }
+}
+
+export function validateAppSpec(obj: unknown): ValidateResult {
+  try {
+    const parsed = AppSpecSchema.parse(obj);
+    const apis = (parsed.apiEndpoints || []).map((a) => a.path);
+    for (const p of parsed.pages) {
+      if (p.api && !apis.includes(p.api)) return { stage: 'appspec', errors: [`page ${p.path} references missing api ${p.api}`], recoverable: true };
+    }
+    return { stage: 'appspec', errors: [], recoverable: false };
+  } catch (e) {
+    return { stage: 'appspec', errors: zodErrors(e), recoverable: true };
+  }
 }

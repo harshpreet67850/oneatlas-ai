@@ -1,56 +1,78 @@
 // Three repair strategies: jsonRepair, missingFieldRepair, schemaConsistencyRepair
 
-export function jsonRepair(raw: string) {
+import { RepairLog, StageId, DataSchema, AppSpec } from '../types';
+
+type RepairResult<T> = { success: boolean; output?: T; log: RepairLog };
+
+export function structural_repair(raw: string): RepairResult<unknown> {
   try {
-    return { ok: true, data: JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    return { success: true, output: parsed, log: { strategy: 'structural_repair', output: parsed, success: true, timestamp: new Date().toISOString() } };
   } catch (err) {
-    // attempt to safe-fix common trailing commas
     try {
       const cleaned = raw.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
-      return { ok: true, data: JSON.parse(cleaned) };
+      const parsed = JSON.parse(cleaned);
+      return { success: true, output: parsed, log: { strategy: 'structural_repair', input_error: String(err), output: parsed, success: true, timestamp: new Date().toISOString() } };
     } catch (e) {
-      return { ok: false, error: 'JSON repair failed' };
+      return { success: false, log: { strategy: 'structural_repair', input_error: String(err), output: undefined, success: false, timestamp: new Date().toISOString() } };
     }
   }
 }
 
-export function missingFieldRepair(obj: any, stage: 'intent' | 'schema' | 'appspec') {
-  if (!obj) obj = {};
+export function field_repair<T extends object>(obj: T | undefined, stage: StageId): RepairResult<T> {
+  const log: RepairLog = { strategy: 'field_repair', output: undefined, success: false, timestamp: new Date().toISOString() };
+  const out = (obj || {}) as Record<string, unknown>;
   if (stage === 'intent') {
-    obj.appName = obj.appName || 'Untitled App';
-    obj.appType = obj.appType || 'web';
-    obj.features = Array.isArray(obj.features) ? obj.features : [];
-    obj.entities = Array.isArray(obj.entities) ? obj.entities : [];
-    obj.integrations_requested = Array.isArray(obj.integrations_requested) ? obj.integrations_requested : [];
+    out.appName = out.appName || 'Untitled App';
+    out.appType = out.appType || 'web';
+    out.features = Array.isArray(out.features) ? out.features : [];
+    out.entities = Array.isArray(out.entities) ? out.entities : [];
+    out.integrations_requested = Array.isArray(out.integrations_requested) ? out.integrations_requested : [];
   }
   if (stage === 'schema') {
-    obj.entities = Array.isArray(obj.entities) ? obj.entities : [];
-    obj.entities = obj.entities.map((e: any) => ({
-      name: e.name || 'Entity',
-      tableName: e.tableName || `${(e.name||'entity').toLowerCase()}s`,
-      tenantId: true,
-      fields: Array.isArray(e.fields) ? e.fields : [{ name: 'id', type: 'string' }, { name: 'tenantId', type: 'string' }],
-      relations: Array.isArray(e.relations) ? e.relations : [],
-    }));
+    const entitiesArr = Array.isArray(out.entities) ? out.entities as unknown[] : [];
+    out.entities = entitiesArr.map((e) => {
+      const rec = e as Record<string, unknown>;
+      const name = typeof rec.name === 'string' ? rec.name : 'Entity';
+      return {
+        name,
+        tableName: typeof rec.tableName === 'string' ? rec.tableName : `${name.toLowerCase()}s`,
+        tenantId: true as true,
+        fields: Array.isArray(rec.fields) ? rec.fields as unknown[] : [{ name: 'id', type: 'string' }, { name: 'tenantId', type: 'string' }],
+        relations: Array.isArray(rec.relations) ? rec.relations as string[] : [],
+      };
+    });
   }
   if (stage === 'appspec') {
-    obj.pages = Array.isArray(obj.pages) ? obj.pages : [];
-    obj.apiEndpoints = Array.isArray(obj.apiEndpoints) ? obj.apiEndpoints : [];
-    obj.authRules = Array.isArray(obj.authRules) ? obj.authRules : [];
-    obj.integrationHooks = Array.isArray(obj.integrationHooks) ? obj.integrationHooks : [];
-    obj.workflowStubs = Array.isArray(obj.workflowStubs) ? obj.workflowStubs : [];
+    out.pages = Array.isArray(out.pages) ? out.pages as unknown[] : [];
+    out.apiEndpoints = Array.isArray(out.apiEndpoints) ? out.apiEndpoints as unknown[] : [];
+    out.authRules = Array.isArray(out.authRules) ? out.authRules as unknown[] : [];
+    out.integrationHooks = Array.isArray(out.integrationHooks) ? out.integrationHooks as unknown[] : [];
+    out.workflowStubs = Array.isArray(out.workflowStubs) ? out.workflowStubs as unknown[] : [];
   }
-  return obj;
+  log.output = out;
+  log.success = true;
+  return { output: out as unknown as T, log, success: true };
 }
 
-export function schemaConsistencyRepair(schema: any) {
-  if (!schema) return { ok: false, error: 'schema null' };
-  schema.entities = (schema.entities || []).map((e: any) => {
-    e.fields = e.fields || [{ name: 'id', type: 'string' }];
-    e.relations = e.relations || [];
-    if (!e.tableName) e.tableName = `${(e.name||'entity').toLowerCase()}s`;
-    e.tenantId = true;
-    return e;
+export function consistency_repair(schema: DataSchema): { ok: boolean; data?: DataSchema; log: RepairLog } {
+  const log: RepairLog = { strategy: 'consistency_repair', output: undefined, success: false, timestamp: new Date().toISOString() };
+  if (!schema) {
+    log.success = false;
+    return { ok: false, log };
+  }
+  const out = { ...schema };
+  out.entities = (out.entities || []).map((e) => {
+    const copy = { ...e };
+    copy.fields = copy.fields || [{ name: 'id', type: 'string' }];
+    copy.relations = copy.relations || [];
+    if (!copy.tableName) copy.tableName = `${(copy.name || 'entity').toLowerCase()}s`;
+    copy.tenantId = true as true;
+    return copy;
   });
-  return { ok: true, data: schema };
+  log.output = out;
+  log.success = true;
+  return { ok: true, data: out, log };
 }
+
+export { RepairLog };
